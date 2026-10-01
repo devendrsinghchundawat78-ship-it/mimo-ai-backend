@@ -16,6 +16,7 @@ import { AIJobs } from './services/aiJobs.js';
 import { SaveProcessor } from './services/saveProcessor.js';
 import { chatRoutes } from './routes/chat.js';
 import { processSaveRoutes } from './routes/processSave.js';
+import { linkDetailsRoutes } from './routes/linkDetails.js';
 import { healthRoutes } from './routes/health.js';
 import { errorHandler } from './utils/errors.js';
 import { logger } from './utils/logger.js';
@@ -31,7 +32,7 @@ app.use((req,res,next)=>{res.locals.requestId=randomUUID();res.setHeader('X-Requ
 app.use(healthRoutes());
 app.use('/ai',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',legacyHeaders:false}),express.json({limit:'128kb'}),supabaseAuth(db));
 app.use('/ai',rateLimit({windowMs:60000,limit:20,keyGenerator:(_req,res)=>res.locals.userId,standardHeaders:'draft-8',legacyHeaders:false}));
-app.use('/ai',chatRoutes(db,router,usage),processSaveRoutes(jobs));
+app.use('/ai',chatRoutes(db,router,usage),processSaveRoutes(jobs),linkDetailsRoutes(db,router,usage,c));
 app.use((_req,res)=>res.status(404).json({error:{code:'NOT_FOUND',message:'Route not found'}}));app.use(errorHandler);
 const server=app.listen(c.PORT,'0.0.0.0',()=>{logger.info({event:'server_started',port:c.PORT});if(c.ENABLE_JOB_WORKER)jobs.start();});
 let shuttingDown=false;

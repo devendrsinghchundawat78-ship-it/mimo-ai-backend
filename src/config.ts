@@ -5,6 +5,8 @@ const schema = z.object({
  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
  SUPABASE_URL: z.url().refine(v => v.startsWith('https://')),
  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+ SUPABASE_LINK_DETAILS_URL: z.url().default('https://ugomjglbzcjekibnupin.supabase.co/functions/v1/mimo-link-details'),
+ SUPABASE_AI_RECOVERY_URL: z.url().default('https://ugomjglbzcjekibnupin.supabase.co/functions/v1/mimo-link-ai-recovery'),
  GEMINI_API_KEY_1: z.string().optional(), GEMINI_API_KEY_2: z.string().optional(), GROQ_API_KEY: z.string().optional(),
  GEMINI_TEXT_MODEL: z.string().default('gemini-2.5-flash'), GEMINI_JSON_MODEL: z.string().default('gemini-2.5-flash'),
  GROQ_TEXT_MODEL: z.string().default('llama-3.3-70b-versatile'), GROQ_JSON_MODEL: z.string().default('llama-3.3-70b-versatile'),
