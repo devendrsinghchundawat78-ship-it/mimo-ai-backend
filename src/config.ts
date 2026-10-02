@@ -8,7 +8,7 @@ const schema = z.object({
  SUPABASE_LINK_DETAILS_URL: z.url().default('https://ugomjglbzcjekibnupin.supabase.co/functions/v1/mimo-link-details'),
  SUPABASE_AI_RECOVERY_URL: z.url().default('https://ugomjglbzcjekibnupin.supabase.co/functions/v1/mimo-link-ai-recovery'),
  GEMINI_API_KEY_1: z.string().optional(), GEMINI_API_KEY_2: z.string().optional(), GROQ_API_KEY: z.string().optional(),
- GEMINI_TEXT_MODEL: z.string().default('gemini-2.5-flash'), GEMINI_JSON_MODEL: z.string().default('gemini-2.5-flash'),
+ GEMINI_TEXT_MODEL: z.string().default('gemini-flash-latest'), GEMINI_JSON_MODEL: z.string().default('gemini-flash-latest'), GEMINI_FALLBACK_MODELS: z.string().default('gemini-2.5-flash-lite,gemini-3-flash-preview,gemini-2.5-pro'),
  GROQ_TEXT_MODEL: z.string().default('openai/gpt-oss-120b'), GROQ_JSON_MODEL: z.string().default('openai/gpt-oss-120b'), GROQ_FALLBACK_MODEL: z.string().default('llama-3.3-70b-versatile'),
  CORS_ORIGINS: z.string().default(''), TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
  AI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(20000),
