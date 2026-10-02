@@ -27,3 +27,9 @@ test('Gemini failure carries status and model, request never contains key in bod
  globalThis.fetch=(async(_u:unknown,init:RequestInit)=>{body=String(init.body);return new Response(JSON.stringify({error:{code:429,status:'RESOURCE_EXHAUSTED',message:'quota'}}),{status:429});}) as typeof fetch;
  try{await assert.rejects(new GeminiProvider('gemini1','SECRETKEY',{GEMINI_TEXT_MODEL:'gemini-2.5-flash',GEMINI_JSON_MODEL:'gemini-2.5-flash'}).generate(req,new AbortController().signal),(e:any)=>e.upstreamStatus===429&&e.upstreamCode==='RESOURCE_EXHAUSTED'&&e.model==='gemini-2.5-flash');assert.doesNotMatch(body,/SECRETKEY/);}finally{globalThis.fetch=orig;}
 });
+test('Gemini walks fallback models only on 404 and remembers the working one',async()=>{
+ const orig=globalThis.fetch;const seen:string[]=[];
+ globalThis.fetch=(async(u:string)=>{const m=/models\/([^:]+):/.exec(String(u))![1]!;seen.push(m);return m==='old'?new Response(JSON.stringify({error:{code:404,status:'NOT_FOUND',message:'gone'}}),{status:404}):new Response(JSON.stringify({candidates:[{content:{parts:[{text:'{"a":1}'}]}}]}),{status:200});}) as unknown as typeof fetch;
+ try{const g=new GeminiProvider('gemini1','K',{GEMINI_TEXT_MODEL:'old',GEMINI_JSON_MODEL:'old',GEMINI_FALLBACK_MODELS:'new'});
+  assert.equal((await g.generate(req,new AbortController().signal)).model,'new');await g.generate(req,new AbortController().signal);assert.deepEqual(seen,['old','new','new']);}finally{globalThis.fetch=orig;}
+});
