@@ -10,7 +10,8 @@ import { AIRouter } from './ai/router.js';
 import { gemini1 } from './ai/providers/gemini1.js';
 import { gemini2 } from './ai/providers/gemini2.js';
 import { groq } from './ai/providers/groq.js';
-import type { AIProvider } from './ai/types.js';
+import type { AIProvider, ProcessedSave } from './ai/types.js';
+import { UniversalUrlService, detectPlatform, validateURL } from './services/urlProcessor.js';
 import { AIUsage } from './services/aiUsage.js';
 import { AIJobs } from './services/aiJobs.js';
 import { SaveProcessor } from './services/saveProcessor.js';
@@ -23,7 +24,13 @@ import { logger } from './utils/logger.js';
 const c=loadConfig();
 const db=createClient(c.SUPABASE_URL,c.SUPABASE_SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false},global:{fetch:(url,options)=>fetch(url,{...options,signal:options?.signal ?? AbortSignal.timeout(10000)})}});
 const router=new AIRouter([gemini1(c),gemini2(c),groq(c)].filter((p):p is AIProvider=>!!p),c.AI_TIMEOUT_MS,c.AI_MAX_CONCURRENT);
-const usage=new AIUsage(db,c.AI_DAILY_REQUEST_LIMIT);const processor=new SaveProcessor(db,router,usage);const jobs=new AIJobs(db,processor,c);
+const usage=new AIUsage(db,c.AI_DAILY_REQUEST_LIMIT);
+const urlService=new UniversalUrlService(db,router,usage,c);
+const recover=async(url:string,userJwt:string):Promise<ProcessedSave>=>{
+ const r=await urlService.executeSupabaseFallback(url,detectPlatform(validateURL(url)),userJwt);
+ return {summary:r.analysis.summary,category:r.analysis.content_type,tags:r.analysis.tags,usefulInfo:r.analysis.key_takeaways};
+};
+const processor=new SaveProcessor(db,router,usage,recover);const jobs=new AIJobs(db,processor,c);
 const app=express();app.disable('x-powered-by');app.set('trust proxy',c.TRUST_PROXY_HOPS);
 app.use(helmet());
 const origins=c.CORS_ORIGINS.split(',').map(s=>s.trim()).filter(Boolean);
@@ -34,7 +41,7 @@ app.use('/ai',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',lega
 app.use('/ai',rateLimit({windowMs:60000,limit:20,keyGenerator:(_req,res)=>res.locals.userId,standardHeaders:'draft-8',legacyHeaders:false}));
 app.use('/ai',chatRoutes(db,router,usage),processSaveRoutes(jobs),linkDetailsRoutes(db,router,usage,c));
 app.use((_req,res)=>res.status(404).json({error:{code:'NOT_FOUND',message:'Route not found'}}));app.use(errorHandler);
-const server=app.listen(c.PORT,'0.0.0.0',()=>{logger.info({event:'server_started',port:c.PORT});if(c.ENABLE_JOB_WORKER)jobs.start();});
+const server=app.listen(c.PORT,'0.0.0.0',()=>{logger.info({event:'server_started',port:c.PORT});if(c.ENABLE_JOB_WORKER)jobs.start();if(c.AI_STARTUP_SELFCHECK)void router.selfCheck().catch(()=>logger.error({event:'selfcheck_crashed'}));});
 let shuttingDown=false;
 async function shutdown():Promise<void> {
  if(shuttingDown)return;shuttingDown=true;

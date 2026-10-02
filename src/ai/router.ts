@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { AIProvider, AIRequest, AIResult } from './types.js';
 import { AppError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { ProviderError, redact } from './providerError.js';
 export class AIRouter {
  private inflight = new Map<string, Promise<AIResult>>();
  private active = 0;
@@ -14,7 +15,23 @@ export class AIRouter {
   const pending = this.execute(request).finally(() => { this.inflight.delete(key); this.active--; });
   this.inflight.set(key,pending); return pending;
  }
+ // Safe diagnostic: one tiny request per provider, logged without any secret. Does not touch user data or quotas.
+ async selfCheck(): Promise<void> {
+  const request: AIRequest = {userId:'selfcheck',capability:'classify',json:true,system:'Reply with JSON only.',messages:[{role:'user',content:'Return {"ok":true}'}]};
+  for (const p of this.providers) {
+   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(),this.timeoutMs);
+   try { const r = await p.generate(request,controller.signal); logger.info({event:'provider_selfcheck',provider:p.name,model:r.model,ok:true}); }
+   catch (error) { this.logFailure(p,request,error); }
+   finally { clearTimeout(timer); }
+  }
+ }
+ private logFailure(p: AIProvider, request: AIRequest, error: unknown): void {
+  const pe = error instanceof ProviderError ? error : undefined;
+  const app = error instanceof AppError ? error : undefined;
+  logger.warn({event:'provider_failed',provider:p.name,model:pe?.model ?? p.modelFor?.(request),httpStatus:pe?.upstreamStatus ?? app?.status,errorCode:pe?.upstreamCode ?? app?.code ?? 'UNKNOWN',errorMessage:redact(pe?.safeMessage ?? app?.message ?? (error as Error)?.message ?? ''),capability:request.capability});
+ }
  private async execute(request: AIRequest): Promise<AIResult> {
+  let failures = 0;
   for (const p of this.providers) {
    const controller = new AbortController();
    let timer: NodeJS.Timeout | undefined;
@@ -23,9 +40,10 @@ export class AIRouter {
     const result = await Promise.race([p.generate(request,controller.signal),timeout]);
     if (request.json) { try { JSON.parse(result.text); } catch { throw new AppError(502,'INVALID_AI_JSON','AI returned invalid JSON'); } }
     return result;
-   } catch { logger.warn({provider:p.name,event:'provider_fallback'}); }
+   } catch (error) { failures++; this.logFailure(p,request,error); logger.warn({provider:p.name,event:'provider_fallback'}); }
    finally { clearTimeout(timer); }
   }
+  logger.error({event:'all_providers_failed',providers:this.providers.length,failures});
   throw new AppError(503,'AI_UNAVAILABLE','Mimo AI is temporarily unavailable');
  }
 }

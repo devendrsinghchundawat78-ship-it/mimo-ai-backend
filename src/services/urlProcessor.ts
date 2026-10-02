@@ -325,8 +325,7 @@ export class UniversalUrlService {
     } catch (primaryError) {
       logger.warn({
         event: 'railway_primary_failed_triggering_supabase_recovery',
-        url: validated.href,
-        error: String(primaryError)
+        errorCode: primaryError instanceof AppError ? primaryError.code : 'UNKNOWN'
       });
 
       // Step 3: Trigger Supabase AI Recovery Fallback
@@ -425,9 +424,9 @@ Return ONLY a valid JSON object matching this schema:
     };
   }
 
-  private async executeSupabaseFallback(url: string, platform: string, userJwt: string): Promise<LinkDetailsResponse> {
+  async executeSupabaseFallback(url: string, platform: string, userJwt: string): Promise<LinkDetailsResponse> {
     const recoveryUrl = this.config.SUPABASE_AI_RECOVERY_URL;
-    logger.info({ event: 'calling_supabase_ai_recovery', recoveryUrl, url });
+    logger.info({ event: 'calling_supabase_ai_recovery' });
 
     let res: Response;
     try {
@@ -445,8 +444,8 @@ Return ONLY a valid JSON object matching this schema:
     }
 
     if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      logger.error({ event: 'supabase_recovery_failed', status: res.status, body: errText });
+      await res.body?.cancel().catch(() => undefined);
+      logger.error({ event: 'supabase_recovery_failed', httpStatus: res.status });
       throw new AppError(502, 'AI_FAILED', 'Supabase AI recovery failed to process URL');
     }
 
@@ -454,7 +453,7 @@ Return ONLY a valid JSON object matching this schema:
     return this.normalizeSupabaseResponse(data, url, platform);
   }
 
-  private normalizeSupabaseResponse(data: any, originalUrl: string, platform: string): LinkDetailsResponse {
+  normalizeSupabaseResponse(data: any, originalUrl: string, platform: string): LinkDetailsResponse {
     const rawAnalysis = data.analysis || data.result || data;
     const rawMetadata = data.metadata || data;
 
@@ -469,11 +468,13 @@ Return ONLY a valid JSON object matching this schema:
 
     const takeaways: string[] = Array.isArray(rawAnalysis.key_takeaways)
       ? rawAnalysis.key_takeaways.map((t: any) => typeof t === 'string' ? t : (t.title ? `${t.title}: ${t.description || ''}` : JSON.stringify(t)))
-      : (Array.isArray(rawAnalysis.usefulInfo) ? rawAnalysis.usefulInfo : ['Key content saved']);
+      : (Array.isArray(rawAnalysis.usefulInfo) ? rawAnalysis.usefulInfo.map(String) : []);
+    const realSummary = String(rawAnalysis.summary || normalizedMetadata.description || '').trim();
+    if (!realSummary) throw new AppError(502, 'AI_FAILED', 'Supabase AI recovery returned no content');
 
     const normalizedAnalysis: LinkAnalysis = {
-      title: String(rawAnalysis.title || normalizedMetadata.title || 'Untitled Link').slice(0, 500),
-      summary: String(rawAnalysis.summary || normalizedMetadata.description || 'Saved link content.').slice(0, 12000),
+      title: String(rawAnalysis.title || normalizedMetadata.title || normalizedMetadata.siteName || platform).slice(0, 500),
+      summary: realSummary.slice(0, 12000),
       key_takeaways: takeaways.slice(0, 8),
       topics: Array.isArray(rawAnalysis.topics) ? rawAnalysis.topics.map(String).slice(0, 15) : [platform],
       tags: Array.isArray(rawAnalysis.tags) ? rawAnalysis.tags.map(String).slice(0, 20) : [platform.toLowerCase()],
@@ -526,7 +527,7 @@ Return ONLY a valid JSON object matching this schema:
 
       await this.db.from('saves').update(updates).eq('id', saveId).eq('user_id', userId);
     } catch (e) {
-      logger.error({ event: 'persist_save_result_failed', error: String(e), saveId });
+      logger.error({ event: 'persist_save_result_failed', errorName: e instanceof Error ? e.name : 'UNKNOWN', saveId });
     }
   }
 }
