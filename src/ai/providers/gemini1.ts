@@ -4,6 +4,7 @@ import { ProviderError, networkFailure, providerFailure } from '../providerError
 type GeminiConfig = Pick<Config,'GEMINI_TEXT_MODEL'|'GEMINI_JSON_MODEL'> & { GEMINI_FALLBACK_MODELS?: string };
 export class GeminiProvider implements AIProvider {
  private working = new Map<string,string>();
+ supportsVideo = true;
  constructor(public name: ProviderName, private key: string, private config: GeminiConfig) {}
  modelFor(r: AIRequest): string { return this.working.get(this.primary(r)) ?? this.primary(r); }
  private primary(r: AIRequest): string { return r.json ? this.config.GEMINI_JSON_MODEL : this.config.GEMINI_TEXT_MODEL; }
@@ -35,7 +36,7 @@ export class GeminiProvider implements AIProvider {
   try {
    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method:'POST', signal, headers:{'Content-Type':'application/json','x-goog-api-key':this.key},
-    body:JSON.stringify({systemInstruction:{parts:[{text:r.system}]},contents:r.messages.map(m => ({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]})),generationConfig:{maxOutputTokens:4096,...thinking,...(r.json ? {responseMimeType:'application/json'} : {})}})
+    body:JSON.stringify({systemInstruction:{parts:[{text:r.system}]},contents:r.messages.map((m,i,all) => ({role:m.role==='assistant'?'model':'user',parts:[...(r.videoUrl && i===all.length-1 && m.role==='user' ? [{fileData:{fileUri:r.videoUrl}}] : []),{text:m.content}]})),generationConfig:{maxOutputTokens:4096,...thinking,...(r.json ? {responseMimeType:'application/json'} : {})}})
    });
   } catch (error) { throw networkFailure(this.name,model,error); }
   if (!response.ok) {
