@@ -36,7 +36,7 @@ export class GeminiProvider implements AIProvider {
   try {
    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method:'POST', signal, headers:{'Content-Type':'application/json','x-goog-api-key':this.key},
-    body:JSON.stringify({systemInstruction:{parts:[{text:r.system}]},contents:r.messages.map((m,i,all) => ({role:m.role==='assistant'?'model':'user',parts:[...(r.videoUrl && i===all.length-1 && m.role==='user' ? [{fileData:{fileUri:r.videoUrl}}] : []),{text:m.content}]})),generationConfig:{maxOutputTokens:4096,...thinking,...(r.json ? {responseMimeType:'application/json'} : {})}})
+    body:JSON.stringify({systemInstruction:{parts:[{text:r.system}]},contents:r.messages.map((m,i,all) => ({role:m.role==='assistant'?'model':'user',parts:[...((r.videoUrl || r.videoInline) && i===all.length-1 && m.role==='user' ? (r.videoInline ? [{inlineData:r.videoInline}] : [{fileData:{fileUri:r.videoUrl}}]) : []),{text:m.content}]})),generationConfig:{maxOutputTokens:4096,...thinking,...(r.json ? {responseMimeType:'application/json'} : {})}})
    });
   } catch (error) { throw networkFailure(this.name,model,error); }
   if (!response.ok) {
