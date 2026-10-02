@@ -9,14 +9,14 @@ const schema = z.object({
  SUPABASE_AI_RECOVERY_URL: z.url().default('https://ugomjglbzcjekibnupin.supabase.co/functions/v1/mimo-link-ai-recovery'),
  GEMINI_API_KEY_1: z.string().optional(), GEMINI_API_KEY_2: z.string().optional(), GROQ_API_KEY: z.string().optional(),
  GEMINI_TEXT_MODEL: z.string().default('gemini-2.5-flash'), GEMINI_JSON_MODEL: z.string().default('gemini-2.5-flash'),
- GROQ_TEXT_MODEL: z.string().default('llama-3.3-70b-versatile'), GROQ_JSON_MODEL: z.string().default('llama-3.3-70b-versatile'),
+ GROQ_TEXT_MODEL: z.string().default('openai/gpt-oss-120b'), GROQ_JSON_MODEL: z.string().default('openai/gpt-oss-120b'), GROQ_FALLBACK_MODEL: z.string().default('llama-3.3-70b-versatile'),
  CORS_ORIGINS: z.string().default(''), TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
  AI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(20000),
  AI_DAILY_REQUEST_LIMIT: z.coerce.number().int().min(1).default(100),
  AI_MAX_CONCURRENT: z.coerce.number().int().min(1).max(100).default(8),
  JOB_POLL_MS: z.coerce.number().int().min(1000).default(5000),
  JOB_LEASE_MS: z.coerce.number().int().min(120000).default(300000),
- JOB_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3), ENABLE_JOB_WORKER: bool
+ JOB_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3), ENABLE_JOB_WORKER: bool, AI_STARTUP_SELFCHECK: bool
 });
 export type Config = z.infer<typeof schema>;
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
