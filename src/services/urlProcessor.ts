@@ -10,6 +10,7 @@ import type { AIUsage } from './aiUsage.js';
 import type { LinkDetailsResponse, LinkMetadata, LinkAnalysis } from '../ai/types.js';
 import { AppError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { redact } from '../ai/providerError.js';
 
 export const linkAnalysisSchema = z.object({
   title: z.string().max(500),
@@ -167,7 +168,7 @@ export async function fetchPublicPage(raw: string, redirects = 0): Promise<{ htm
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9'
       },
-      lookup: (_host, _opts, cb) => cb(null, record.address, record.family)
+      lookup: ((_host: string, opts: { all?: boolean }, cb: (...a: any[]) => void) => opts?.all ? cb(null, [{ address: record.address, family: record.family }]) : cb(null, record.address, record.family)) as any
     }, res => {
       const status = res.statusCode ?? 500;
       if (status >= 300 && status < 400) {
@@ -325,7 +326,9 @@ export class UniversalUrlService {
     } catch (primaryError) {
       logger.warn({
         event: 'railway_primary_failed_triggering_supabase_recovery',
-        errorCode: primaryError instanceof AppError ? primaryError.code : 'UNKNOWN'
+        errorCode: primaryError instanceof AppError ? primaryError.code : ((primaryError as { code?: string })?.code ?? 'UNKNOWN'),
+        errorName: (primaryError as Error)?.name,
+        errorMessage: redact(String((primaryError as Error)?.message ?? '')).slice(0, 300)
       });
 
       // Step 3: Trigger Supabase AI Recovery Fallback
@@ -411,7 +414,7 @@ Return ONLY a valid JSON object matching this schema:
     };
 
     const aiResult = await this.usage.run(r, () => this.router.run(r));
-    const parsedAnalysis = linkAnalysisSchema.parse(JSON.parse(aiResult.text));
+    const parsedAnalysis = linkAnalysisSchema.parse(JSON.parse(aiResult.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')));
 
     return {
       ok: true,

@@ -4,6 +4,7 @@ import type { ProcessingJob } from '../ai/types.js';
 import type { SaveProcessor } from './saveProcessor.js';
 import { AppError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { redact } from '../ai/providerError.js';
 export class AIJobs {
  private stopping=false; private loop?:Promise<void>; private wake?:()=>void;
  constructor(private db:SupabaseClient,private processor:SaveProcessor,private config:Config) {}
@@ -37,7 +38,7 @@ export class AIJobs {
       this.tokens.delete(job.id);
      } catch(error) {
       const code=error instanceof AppError ? error.code : 'PROCESSING_FAILED';
-      logger.warn({event:'job_processing_failed',jobId:job.id,errorCode:code});
+      logger.warn({event:'job_processing_failed',jobId:job.id,errorCode:code,errorName:(error as Error)?.name,errorDetail:redact(String((error as {code?:string})?.code ?? '')+' '+String((error as Error)?.message ?? '')).slice(0,300)});
       const {error:failError}=await this.db.rpc('mimo_ai_job_finish',{p_job_id:job.id,p_lease_token:job.lease_token,p_result:null,p_error_code:code,p_max_attempts:this.config.JOB_MAX_ATTEMPTS});
       if(failError) logger.error({event:'job_status_write_failed',jobId:job.id});
      }
