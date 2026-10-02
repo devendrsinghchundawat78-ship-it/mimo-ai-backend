@@ -1,10 +1,11 @@
+import https from 'node:https';
 import type { AIRequest, AIResult } from '../ai/types.js';
 import type { AIRouter } from '../ai/router.js';
 import type { AIUsage } from './aiUsage.js';
 import { AppError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { redact } from '../ai/providerError.js';
-import { detectPlatform, extractPageData, fetchPlatformOEmbed, fetchPublicPage, validateURL, type FetchOpts, type OEmbedMetadata } from './urlProcessor.js';
+import { detectPlatform, extractPageData, fetchPlatformOEmbed, fetchPublicPage, validateURL, resolveSafeIp, type FetchOpts, type OEmbedMetadata } from './urlProcessor.js';
 
 export interface Evidence {
   platform: string;
@@ -19,12 +20,12 @@ export interface Evidence {
   durationSeconds?: number;
   pageText: string;
   videoUrl?: string;
+  videoInline?: { mimeType: string; data: string };
   hasLoginWall: boolean;
   sources: string[];
   level: 'full' | 'metadata' | 'none';
 }
 
-const CRAWLER_UA = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
 const CODE_MARKERS = ['WIZ_global_data', 'ytcfg', 'ytInitialData', 'window.__', '(function(', 'var _', '"use strict"', 'function(', '=>{', 'document.', 'self.__'];
 
 // True when text is script/bootstrap code and not human prose.
@@ -70,6 +71,47 @@ async function tryFetch(raw: string, opts: FetchOpts): Promise<{ html: string; f
   }
 }
 
+
+// Public embeds only. No session, private APIs, proxy, challenge bypass or URL logging.
+export function instagramEmbedUrl(u: URL): string | undefined {
+  if (!['instagram.com', 'www.instagram.com'].includes(u.hostname.toLowerCase())) return undefined;
+  const m = u.pathname.match(/^\/(?:reel|reels|p)\/([A-Za-z0-9_-]{5,40})\/?$/);
+  return m ? `https://www.instagram.com/p/${m[1]}/embed/` : undefined;
+}
+export function instagramMediaUrl(html: string): string | undefined {
+  // Embed data is often JSON serialized inside another JSON string.
+  const flat = html.replace(/\\"/g, '"');
+  const match = flat.match(/"video_url"\s*:\s*"([^"]+)"/) ?? flat.match(/<meta[^>]+(?:property|name)=["']og:video(?::secure_url)?["'][^>]+content=["']([^"']+)/i);
+  if (!match) return undefined;
+  const raw = match[1]!.replace(/\\+\//g, '/').replace(/\\+u0026/g, '&').replace(/\\+u0025/g, '%').replace(/&amp;/g, '&');
+  try { const u = validateURL(raw); return u.hostname.endsWith('.cdninstagram.com') ? u.href : undefined; } catch { return undefined; }
+}
+export async function downloadInstagramVideo(raw: string): Promise<{ mimeType: string; data: string }> {
+  const u = validateURL(raw);
+  if (!u.hostname.endsWith('.cdninstagram.com')) throw new AppError(422, 'VIDEO_HOST_UNSUPPORTED', 'Not an Instagram media host');
+  const ip = await resolveSafeIp(u.hostname);
+  const bytes = await new Promise<Buffer>((resolve, reject) => {
+    const req = https.get(u, {
+      headers: { 'User-Agent': 'MimoLinkPreview/1.0', 'Accept': 'video/mp4' },
+      lookup: ((_h: string, o: { all?: boolean }, cb: (...a: any[]) => void) => o?.all ? cb(null, [ip]) : cb(null, ip.address, ip.family)) as any
+    }, res => {
+      // Do not follow media redirects or forward any cookies.
+      if (res.statusCode !== 200 || !(res.headers['content-type'] ?? '').includes('video/mp4')) {
+        res.resume(); reject(new AppError(422, 'VIDEO_UNAVAILABLE', 'Public video unavailable')); return;
+      }
+      const max = 12 * 1024 * 1024;
+      if (Number(res.headers['content-length'] ?? 0) > max) { res.resume(); reject(new AppError(413, 'VIDEO_TOO_LARGE', 'Video exceeds inline budget')); return; }
+      let size = 0; const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => { size += chunk.length; if (size > max) res.destroy(new AppError(413, 'VIDEO_TOO_LARGE', 'Video exceeds inline budget')); else chunks.push(chunk); });
+      res.on('error', reject); res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    const timer = setTimeout(() => req.destroy(new AppError(504, 'VIDEO_TIMEOUT', 'Public media download timed out')), 15000);
+    req.on('close', () => clearTimeout(timer)); req.on('error', reject);
+  });
+  if (bytes.length < 12 || bytes.subarray(4, 8).toString() !== 'ftyp') throw new AppError(422, 'VIDEO_INVALID', 'Not an MP4 file');
+  return { mimeType: 'video/mp4', data: bytes.toString('base64') };
+}
+
 export async function collectEvidence(rawUrl: string): Promise<Evidence> {
   const url = validateURL(rawUrl);
   const platform = detectPlatform(url);
@@ -80,7 +122,7 @@ export async function collectEvidence(rawUrl: string): Promise<Evidence> {
   const oembed: OEmbedMetadata | null = await fetchPlatformOEmbed(url, platform);
   if (oembed) sources.push('oembed');
 
-  const opts: FetchOpts = isYouTube ? { cookie: 'CONSENT=YES+1; SOCS=CAI' } : isInstagram ? { userAgent: CRAWLER_UA } : {};
+  const opts: FetchOpts = isYouTube ? { cookie: 'CONSENT=YES+1; SOCS=CAI' } : isInstagram ? { userAgent: 'MimoLinkPreview/1.0' } : {};
   const page = await tryFetch(url.href, opts);
 
   let title = oembed?.title, author = oembed?.author, description: string | undefined, siteName = oembed?.provider, imageUrl = oembed?.thumbnail;
@@ -109,6 +151,22 @@ export async function collectEvidence(rawUrl: string): Promise<Evidence> {
   }
   if (isInstagram && /^\s*(log ?in|sign ?up)/i.test(title ?? '')) title = undefined;
 
+  let videoInline: Evidence['videoInline'];
+  const embedUrl = isInstagram ? instagramEmbedUrl(url) : undefined;
+  if (embedUrl) {
+    try {
+      const embed = await fetchPublicPage(embedUrl, 0, { userAgent: 'MimoLinkPreview/1.0' });
+      if (!embed.finalUrl.includes('/embed/')) throw new AppError(422, 'EMBED_LOGIN_WALL', 'Embed redirected');
+      const mediaUrl = instagramMediaUrl(embed.html);
+      if (mediaUrl) {
+        videoInline = await downloadInstagramVideo(mediaUrl);
+        sources.push('instagram-public-embed-video');
+        logger.info({ event: 'instagram_video_extracted', bytes: Math.floor(videoInline.data.length * 3 / 4) });
+      } else logger.info({ event: 'instagram_video_unavailable', errorCode: 'NO_PUBLIC_MEDIA' });
+    } catch (error) {
+      logger.warn({ event: 'instagram_video_unavailable', errorCode: error instanceof AppError ? error.code : 'PUBLIC_FETCH_FAILED' });
+    }
+  }
   const id = isYouTube ? youtubeId(url) : undefined;
   const videoUrl = id ? `https://www.youtube.com/watch?v=${id}` : undefined;
   if (description && looksLikeCode(description)) description = undefined;
@@ -116,7 +174,7 @@ export async function collectEvidence(rawUrl: string): Promise<Evidence> {
 
   const hasMeta = !!(title || description || author);
   const level: Evidence['level'] = (pageText.length > 300 || (description && description.length > 200)) ? 'full' : (hasMeta || videoUrl ? 'metadata' : 'none');
-  return { platform, canonicalUrl, title: title?.slice(0, 500), author, description: description?.slice(0, 4000), siteName, imageUrl, publishedAt, keywords, durationSeconds, pageText: pageText.slice(0, 16000), videoUrl, hasLoginWall, sources, level };
+  return { platform, canonicalUrl, title: title?.slice(0, 500), author, description: description?.slice(0, 4000), siteName, imageUrl, publishedAt, keywords, durationSeconds, pageText: pageText.slice(0, 16000), videoUrl, videoInline, hasLoginWall, sources, level };
 }
 
 export const STYLE_RULES = `Write like a rich link-preview card, in the same language as the content (Hinglish stays Hinglish):
@@ -135,8 +193,8 @@ export function evidencePayload(e: Evidence, extra: Record<string, unknown> = {}
 
 // Runs the AI with the public video attached when available. If the video route fails (private video, unsupported, timeout), reruns with metadata only.
 export async function runWithOptionalVideo(usage: AIUsage, router: AIRouter, e: Evidence, make: (videoAttached: boolean) => AIRequest): Promise<{ result: AIResult; videoAttached: boolean }> {
-  if (e.videoUrl) {
-    const r = { ...make(true), videoUrl: e.videoUrl, timeoutMs: 40000 };
+  if (e.videoUrl || e.videoInline) {
+    const r = { ...make(true), videoUrl: e.videoUrl, videoInline: e.videoInline, timeoutMs: 60000 };
     try { return { result: await usage.run(r, () => router.run(r)), videoAttached: true }; }
     catch (error) {
       if (error instanceof AppError && (error.code === 'AI_QUOTA_OR_BUSY' || error.code === 'AI_BUSY')) throw error;
