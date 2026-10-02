@@ -20,7 +20,10 @@ export class AIRouter {
   const request: AIRequest = {userId:'selfcheck',capability:'classify',json:true,system:'Reply with JSON only.',messages:[{role:'user',content:'Return {"ok":true}'}]};
   for (const p of this.providers) {
    const controller = new AbortController(); const timer = setTimeout(() => controller.abort(),this.timeoutMs);
-   try { const r = await p.generate(request,controller.signal); logger.info({event:'provider_selfcheck',provider:p.name,model:r.model,ok:true}); }
+   try {
+    const lister = (p as { listModels?: (s: AbortSignal) => Promise<string[]> }).listModels;
+    if (lister) { try { const names = await lister.call(p,controller.signal); logger.info({event:'provider_models',provider:p.name,count:names.length,models:names.filter(n => /gemini/.test(n)).slice(0,40)}); } catch (error) { this.logFailure(p,request,error); } }
+    const r = await p.generate(request,controller.signal); logger.info({event:'provider_selfcheck',provider:p.name,model:r.model,ok:true}); }
    catch (error) { this.logFailure(p,request,error); }
    finally { clearTimeout(timer); }
   }
