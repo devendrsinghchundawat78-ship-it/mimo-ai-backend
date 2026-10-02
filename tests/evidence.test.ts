@@ -23,3 +23,21 @@ test('normalizeAnalysis tolerates missing optional fields and rejects empty summ
   assert.equal(a.title, 'T'); assert.ok(a.key_takeaways.length >= 1); assert.equal(a.confidence, 0.5);
   assert.throws(() => normalizeAnalysis({ summary: '  ' }, { title: 'T', platform: 'YouTube', level: 'metadata' }));
 });
+
+import { instagramEmbedUrl, instagramMediaUrl, downloadInstagramVideo } from '../src/services/evidence.js';
+test('embed accepts only exact Instagram public post paths', () => {
+ assert.equal(instagramEmbedUrl(new URL('https://www.instagram.com/reel/DIMypaNMYC6/?x=1')), 'https://www.instagram.com/p/DIMypaNMYC6/embed/');
+ for (const u of ['https://evilinstagram.com/reel/abcdef/', 'https://www.instagram.com/accounts/login/', 'https://instagram.com/stories/user/123']) assert.equal(instagramEmbedUrl(new URL(u)), undefined);
+});
+test('media parser handles serialized JSON without evaluating scripts', () => {
+ const media = 'https://scontent.cdninstagram.com/video.mp4?a=1&b=2';
+ assert.equal(instagramMediaUrl(JSON.stringify({video_url:media})), media);
+ assert.equal(instagramMediaUrl(JSON.stringify(JSON.stringify({video_url:media}))), media);
+ assert.equal(instagramMediaUrl('{"video_url":"https://evil.test/file.mp4"}'), undefined);
+ assert.equal(instagramMediaUrl('{"video_url":"https://cdninstagram.com.evil.test/file.mp4"}'), undefined);
+ assert.equal(instagramMediaUrl('<html>Log in</html>'), undefined);
+});
+test('download refuses non-CDN hosts before network', async () => {
+ await assert.rejects(downloadInstagramVideo('https://example.com/video.mp4'));
+ await assert.rejects(downloadInstagramVideo('https://127.0.0.1/video.mp4'));
+});
