@@ -1,7 +1,7 @@
 export type Capability = 'chat' | 'summarize' | 'extract' | 'classify' | 'generate-tags' | 'search' | 'process-save' | 'link-details';
 export type ProviderName = 'gemini1' | 'gemini2' | 'groq';
 export interface Message { role: 'user' | 'assistant'; content: string }
-export interface AIRequest { userId: string; capability: Capability; messages: Message[]; system: string; json: boolean; videoUrl?: string; timeoutMs?: number }
+export interface AIRequest { userId: string; capability: Capability; messages: Message[]; system: string; json: boolean; videoUrl?: string; videoInline?: { mimeType: string; data: string }; timeoutMs?: number }
 export interface AIResult { text: string; provider: ProviderName; model: string; inputTokens: number; outputTokens: number }
 export interface AIProvider { name: ProviderName; supportsVideo?: boolean; modelFor?(request: AIRequest): string; generate(request: AIRequest, signal: AbortSignal): Promise<AIResult> }
 export interface ProcessedSave { summary: string; category: string; tags: string[]; usefulInfo: string[] }
