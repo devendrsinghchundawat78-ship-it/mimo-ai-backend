@@ -41,7 +41,7 @@ app.use('/ai',rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-8',lega
 app.use('/ai',rateLimit({windowMs:60000,limit:20,keyGenerator:(_req,res)=>res.locals.userId,standardHeaders:'draft-8',legacyHeaders:false}));
 app.use('/ai',chatRoutes(db,router,usage),processSaveRoutes(jobs),linkDetailsRoutes(db,router,usage,c));
 app.use((_req,res)=>res.status(404).json({error:{code:'NOT_FOUND',message:'Route not found'}}));app.use(errorHandler);
-const server=app.listen(c.PORT,'0.0.0.0',()=>{logger.info({event:'server_started',port:c.PORT});if(c.ENABLE_JOB_WORKER)jobs.start();if(c.AI_STARTUP_SELFCHECK)void router.selfCheck().catch(()=>logger.error({event:'selfcheck_crashed'}));});
+const server=app.listen(c.PORT,'0.0.0.0',()=>{logger.info({event:'server_started',port:c.PORT});if(c.ENABLE_JOB_WORKER)jobs.start();if(c.AI_STARTUP_SELFCHECK)void router.selfCheck().then(()=>router.videoSelfCheck()).catch(()=>logger.error({event:'selfcheck_crashed'}));});
 let shuttingDown=false;
 async function shutdown():Promise<void> {
  if(shuttingDown)return;shuttingDown=true;
