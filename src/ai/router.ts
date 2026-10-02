@@ -28,6 +28,17 @@ export class AIRouter {
    finally { clearTimeout(timer); }
   }
  }
+ // Safe diagnostic for public-video understanding: one tiny request on a 19s public YouTube video, logged without any secret.
+ async videoSelfCheck(): Promise<void> {
+  const request: AIRequest = {userId:'selfcheck',capability:'classify',json:true,timeoutMs:45000,videoUrl:'https://www.youtube.com/watch?v=jNQXAC9IVRw',system:'Reply with JSON only.',messages:[{role:'user',content:'Return {"shows": "one short sentence describing what is shown and said in the attached video"}'}]};
+  for (const p of this.providers) {
+   if (!p.supportsVideo) continue;
+   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(),45000);
+   try { const r = await p.generate(request,controller.signal); logger.info({event:'video_selfcheck',provider:p.name,model:r.model,ok:true,answer:r.text.slice(0,300)}); return; }
+   catch (error) { this.logFailure(p,request,error); }
+   finally { clearTimeout(timer); }
+  }
+ }
  private logFailure(p: AIProvider, request: AIRequest, error: unknown): void {
   const pe = error instanceof ProviderError ? error : undefined;
   const app = error instanceof AppError ? error : undefined;
@@ -36,10 +47,11 @@ export class AIRouter {
  private async execute(request: AIRequest): Promise<AIResult> {
   let failures = 0;
   for (const p of this.providers) {
+   if (request.videoUrl && !p.supportsVideo) continue;
    const controller = new AbortController();
    let timer: NodeJS.Timeout | undefined;
    try {
-    const timeout = new Promise<never>((_,reject) => {timer=setTimeout(() => {controller.abort();reject(new AppError(504,'AI_TIMEOUT','AI request timed out'));},this.timeoutMs);});
+    const timeout = new Promise<never>((_,reject) => {timer=setTimeout(() => {controller.abort();reject(new AppError(504,'AI_TIMEOUT','AI request timed out'));},request.timeoutMs ?? this.timeoutMs);});
     const result = await Promise.race([p.generate(request,controller.signal),timeout]);
     if (request.json) { try { JSON.parse(result.text); } catch { throw new AppError(502,'INVALID_AI_JSON','AI returned invalid JSON'); } }
     return result;
